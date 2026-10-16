@@ -5089,20 +5089,22 @@ async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
     try {
       const response = await fetcher(new URL("/api/intelligence/publish", endpoint2), { method: "POST", headers: { Authorization: "Bearer " + publishToken, "Content-Type": "application/json" }, body, redirect: "error", signal: AbortSignal.timeout(6e4) });
       if (!response.ok) {
-        if (response.status < 500) throw new Error("PUBLISH_REJECTED");
+        if (response.status < 500) throw new Error("PUBLISH_HTTP_" + response.status);
         throw new Error("PUBLISH_UNAVAILABLE");
       }
       const result = await response.json();
       if (result.ok !== true) throw new Error("PUBLISH_REJECTED");
       return { ok: true, applied: result.applied, generatedAt: brief.generatedAt, stories: brief.stories.length, sources: brief.sourceReports.map((report) => ({ source: report.source, status: report.status })) };
     } catch (error) {
+      if (/^PUBLISH_HTTP_\d+$/.test(error.message)) throw error;
       if (error.message === "PUBLISH_REJECTED" || attempt === 2) throw new Error("CLOUD_REFRESH_FAILED");
       await new Promise((resolve2) => setTimeout(resolve2, 1e3 * 2 ** attempt));
     }
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) refreshCloud().then((result) => console.log(JSON.stringify(result))).catch(() => {
-  console.error("CLOUD_REFRESH_FAILED: previous cloud snapshot retained");
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) refreshCloud().then((result) => console.log(JSON.stringify(result))).catch((error) => {
+  const safe = ["CONFIG_REQUIRED", "NO_FRESH_NEWS", "INCOMPLETE_UNIVERSE", "TOO_LARGE", "INVALID_BRIEF", "INVALID_STORY", "INVALID_UNIVERSE", "PRIVATE_DATA_REJECTED", "INVALID_OIDC_ENDPOINT", "OIDC_FAILED", "PUBLISH_AUTH_REQUIRED", "CLOUD_REFRESH_FAILED"];
+  console.error(JSON.stringify({ error: safe.includes(error.message) || /^PUBLISH_HTTP_\d+$/.test(error.message) ? error.message : "CLOUD_REFRESH_FAILED", previousSnapshotRetained: true }));
   process.exitCode = 1;
 });
 export {

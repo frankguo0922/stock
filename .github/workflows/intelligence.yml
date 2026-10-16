@@ -1,8 +1,10 @@
 name: Market Intelligence
 on:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/intelligence.yml'
+      - 'scripts/intelligence-*.mjs'
   workflow_dispatch:
   schedule:
     - cron: '30 0,10 * * *'
