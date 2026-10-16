@@ -1,0 +1,29 @@
+name: Market Intelligence
+on:
+  push:
+    paths:
+      - '.github/workflows/intelligence.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '30 0,10 * * *'
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: intelligence-publish
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/intelligence-universe.mjs
+      - run: node scripts/intelligence-cloud-refresh.mjs
+        env:
+          INTELLIGENCE_WORKER_URL: https://holdings-intelligence.b28228250.workers.dev
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
