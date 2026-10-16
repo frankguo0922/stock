@@ -5094,7 +5094,13 @@ async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
       }
       const result = await response.json();
       if (result.ok !== true) throw new Error("PUBLISH_REJECTED");
-      return { ok: true, applied: result.applied, generatedAt: brief.generatedAt, stories: brief.stories.length, sources: brief.sourceReports.map((report) => ({ source: report.source, status: report.status })) };
+      let images = { unavailable: true };
+      try {
+        const response2 = await fetcher(new URL("/api/intelligence/images/generate", endpoint2), { method: "POST", headers: { Authorization: "Bearer " + publishToken }, redirect: "error", signal: AbortSignal.timeout(9e4) });
+        if (response2.ok) images = await response2.json();
+      } catch {
+      }
+      return { ok: true, applied: result.applied, generatedAt: brief.generatedAt, stories: brief.stories.length, images, sources: brief.sourceReports.map((report) => ({ source: report.id, status: report.status })) };
     } catch (error) {
       if (/^PUBLISH_HTTP_\d+$/.test(error.message)) throw error;
       if (error.message === "PUBLISH_REJECTED" || attempt === 2) throw new Error("CLOUD_REFRESH_FAILED");
@@ -5110,3 +5116,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
 export {
   refreshCloud
 };
+
