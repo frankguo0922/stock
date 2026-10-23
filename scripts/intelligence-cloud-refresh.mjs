@@ -4336,6 +4336,25 @@ var init_fxp = __esm({
   }
 });
 
+// src/intelligence/news-eligibility.js
+function routineAnnouncement(article) {
+  const title = article.originalTitle || article.headline || article.title || "";
+  const meeting = /股東.*(?:常會|臨時會|會議)|股東會|shareholders?['’]?\s+meeting|annual general meeting/i.test(title);
+  const routine = /召開|召集|開會通知|重要決議事項|議事錄|議事手冊|停止過戶|受理.*提案|更正|會議日期|meeting notice|meeting date/i.test(title);
+  return meeting && routine && !materialChange.test(title + " " + (article.excerpt || article.description || ""));
+}
+function marketRelevant(article) {
+  if (routineAnnouncement(article)) return false;
+  if (!String(article.source || article.provider || "").startsWith("bbc")) return true;
+  return /股|金融|經濟|經貿|貿易|關稅|制裁|央行|通膨|利率|債|匯率|美元|油價|能源|晶片|半導體|供應鏈|科技|企業|產業|投資|戰爭|衝突|航運|稀土|market|econom|business|inflation|tariff|trade|bank|oil|energy|chip|sanction|war/i.test((article.headline || article.title || "") + " " + (article.excerpt || article.description || ""));
+}
+var materialChange;
+var init_news_eligibility = __esm({
+  "src/intelligence/news-eligibility.js"() {
+    materialChange = /併購|收購|合併|分割|重大投資|私募|現金增資|減資|股利|配息|資產處分|下市|解散|經營權|控制權|停工|訴訟|裁罰|重大損失|財測|財報|營收|獲利|訂單|資本支出|擴產|merger|acquisition|dividend|guidance|earnings|capital expenditure/i;
+  }
+});
+
 // src/intelligence/curation.js
 function identifyThemes(cluster, themes2) {
   const headline = cluster.sources.map((source) => source.headline).join(" ").toLowerCase();
@@ -4355,7 +4374,7 @@ function sourceTier(source) {
   const publisher = (source.publisher || "").toLowerCase();
   if (/(^|\.)(reuters.com|bloomberg.com|ft.com|federalreserve.gov|ecb.europa.eu|sec.gov|twse.com.tw|mops.twse.com.tw)$/.test(host)) return "A";
   if (host === "news.google.com" && /^(reuters|bloomberg|financial times)$/i.test(publisher)) return "A";
-  if (/(^|\.)(yahoo.com|cna.com.tw|cnbc.com|marketwatch.com)$/.test(host)) return "B";
+  if (/(^|\.)(yahoo.com|cna.com.tw|cnbc.com|marketwatch.com|cnyes.com|bbc.com|bbc.co.uk)$/.test(host)) return "B";
   return "C";
 }
 function tokens(value2) {
@@ -4375,6 +4394,7 @@ function sameEvent(first, second) {
 function curateNews(articles, themes2, now = Date.now(), minimum = 5) {
   const seen = /* @__PURE__ */ new Set(), clusters = [];
   for (const article of articles) {
+    if (!marketRelevant(article)) continue;
     const link = url(article.url), published = Date.parse(article.publishedAt);
     if (!link || !article.headline?.trim() || !Number.isFinite(published) || article.timestampKind === "indexed" || published > now + 3e5 || now - published > 72 * hour) continue;
     const canonical = new URL(link);
@@ -4407,7 +4427,7 @@ function curateNews(articles, themes2, now = Date.now(), minimum = 5) {
 }
 function storyRegion(story) {
   const headline = story.originalTitle || story.headline || "";
-  return /台股|臺股|台指|臺指|加權指數|台幣|臺幣|金管會|台灣|臺灣|台積電|聯電|鴻海|廣達|緯創|緯穎|上市公司|上櫃公司|Taiwan|TSMC/i.test(headline) || (story.sources || []).some((source) => source.sourceType === "company_event" || source.provider === "yahoo-tw-tw-market" && !/美股|歐股|日股|港股|美國|日本|英國/.test(headline)) ? "taiwan" : "international";
+  return /台股|臺股|台指|臺指|加權指數|台幣|臺幣|金管會|台灣|臺灣|台積電|聯電|鴻海|廣達|緯創|緯穎|上市公司|上櫃公司|Taiwan|TSMC/i.test(headline) || (story.sources || []).some((source) => source.market === "TW" || source.sourceType === "company_event" || source.provider === "yahoo-tw-tw-market" && !/美股|歐股|日股|港股|美國|日本|英國/.test(headline)) ? "taiwan" : "international";
 }
 function editorialAngle(story) {
   const headline = (story.originalTitle || story.headline || "") + " " + (story.titleZh || "");
@@ -4434,7 +4454,8 @@ function selectTopStories(ranked, limit = 8) {
   const hasCompany = !gptReviewed && ordered.some(isCompanyEvent);
   for (const story of ordered) {
     if (selected.length >= limit) break;
-    const region = storyRegion(story), angle = editorialAngle(story), primary = story.themes[0] || "general";
+    if (!marketRelevant(story)) continue;
+    const region = storyRegion(story), angle = editorialAngle(story), primary = story.themes?.[0] || story.primaryEventType || "general";
     if (regions[region] >= targets[region] || (counts.get(primary) || 0) >= 2 || angle && angles.has(angle) || selected.some((previous) => sameEvent(previous.headline || "", story.headline || ""))) continue;
     if (region === "taiwan" && hasCompany && targets.taiwan > 0 && regions.taiwan === targets.taiwan - 1 && !selected.some(isCompanyEvent) && !isCompanyEvent(story)) continue;
     selected.push({ ...story, editorialRegion: region });
@@ -4447,6 +4468,7 @@ function selectTopStories(ranked, limit = 8) {
 var hour, url, aliases, normalize, isCompanyEvent;
 var init_curation = __esm({
   "src/intelligence/curation.js"() {
+    init_news_eligibility();
     hour = 36e5;
     url = (value2) => {
       try {
@@ -4658,7 +4680,10 @@ var init_candidate_news = __esm({
 // scripts/intelligence-sources.mjs
 var intelligence_sources_exports = {};
 __export(intelligence_sources_exports, {
+  BbcRssSource: () => BbcRssSource,
   CnaRssSource: () => CnaRssSource,
+  CnbcRssSource: () => CnbcRssSource,
+  CnyesNewsSource: () => CnyesNewsSource,
   FinMindStockNewsSource: () => FinMindStockNewsSource,
   GNewsSource: () => GNewsSource,
   MopsEventSource: () => MopsEventSource,
@@ -4676,7 +4701,7 @@ function normalizeArticle(row, { source, market = "GLOBAL", language = "zh-TW", 
   return { ...row, id: createHash("sha256").update(source + "|" + url2 + "|" + publishedAt + "|" + stockSymbols.join(",")).digest("hex"), source, publisher: row.publisher || new URL(url2).hostname, title, description: typeof (row.description ?? row.excerpt) === "string" ? (row.description ?? row.excerpt).slice(0, 600) : null, url: url2, imageUrl: safeUrl(row.imageUrl), publishedAt, fetchedAt: new Date(now).toISOString(), language, market, stockSymbols, headline: title, excerpt: typeof (row.description ?? row.excerpt) === "string" ? (row.description ?? row.excerpt).slice(0, 600) : null, provider: row.provider || source, timestampKind: publishedAt ? row.timestampKind || "published" : "unknown_time" };
 }
 async function collectSources({ fetcher = fetch, now = Date.now(), sources } = {}) {
-  const adapters = sources || [new YahooTaiwanRssSource({ fetcher }), new CnaRssSource({ fetcher }), new MopsEventSource({ fetcher }), new GNewsSource({ fetcher })];
+  const adapters = sources || [new YahooTaiwanRssSource({ fetcher }), new CnaRssSource({ fetcher }), new CnyesNewsSource({ fetcher }), new CnbcRssSource({ fetcher }), new BbcRssSource({ fetcher }), new MopsEventSource({ fetcher }), new GNewsSource({ fetcher })];
   const articles = [], reports = [];
   for (const adapter of adapters) {
     const result = await adapter.read({ now });
@@ -4685,12 +4710,13 @@ async function collectSources({ fetcher = fetch, now = Date.now(), sources } = {
   }
   return { articles, reports, fetchedAt: new Date(now).toISOString() };
 }
-var fresh, safeError, SourceAdapter, RssSource, YahooTaiwanRssSource, CnaRssSource, MopsEventSource, FinMindStockNewsSource, GNewsSource;
+var fresh, safeError, SourceAdapter, RssSource, YahooTaiwanRssSource, CnaRssSource, CnbcRssSource, BbcRssSource, CnyesNewsSource, MopsEventSource, FinMindStockNewsSource, GNewsSource;
 var init_intelligence_sources = __esm({
   "scripts/intelligence-sources.mjs"() {
     init_intelligence_harvest();
     init_engine();
     init_candidate_news();
+    init_news_eligibility();
     fresh = (article, now) => Number.isFinite(Date.parse(article.publishedAt)) && Date.parse(article.publishedAt) <= now + 3e5 && now - Date.parse(article.publishedAt) <= 72 * 36e5;
     safeError = (error) => /^(HTTP_\d+|INVALID_FEED|NOT_A_FEED|INVALID_RESPONSE|MISSING_API_KEY|INVALID_CANDIDATE|CANDIDATES_REQUIRED|RESPONSE_TOO_LARGE|FINMIND_\d+)$/.test(error.message) ? error.message : "SOURCE_UNAVAILABLE";
     SourceAdapter = class {
@@ -4740,6 +4766,48 @@ var init_intelligence_sources = __esm({
       constructor(options = {}) {
         super({ ...options, id: "cna" });
         this.feeds = ["finance", "technology", "intworld"].map((category) => ({ id: "cna-" + category, publisher: "\u4E2D\u592E\u793E", market: category === "finance" ? "TW" : "GLOBAL", url: "https://feeds.feedburner.com/rsscna/" + category }));
+      }
+    };
+    CnbcRssSource = class extends RssSource {
+      constructor(options = {}) {
+        super({ ...options, id: "cnbc" });
+        this.feeds = [{ id: "cnbc-world", publisher: "CNBC", market: "GLOBAL", language: "en", url: "https://www.cnbc.com/id/100727362/device/rss/rss.html" }];
+      }
+    };
+    BbcRssSource = class extends RssSource {
+      constructor(options = {}) {
+        super({ ...options, id: "bbc" });
+        this.feeds = [{ id: "bbc-chinese", publisher: "BBC \u4E2D\u6587", market: "GLOBAL", language: "zh-TW", url: "https://feeds.bbci.co.uk/zhongwen/trad/rss.xml" }, { id: "bbc-business", publisher: "BBC", market: "GLOBAL", language: "en", url: "https://feeds.bbci.co.uk/news/business/rss.xml" }];
+      }
+      async fetch(context) {
+        const result = await super.fetch(context);
+        return { ...result, articles: result.articles.filter(marketRelevant) };
+      }
+    };
+    CnyesNewsSource = class extends SourceAdapter {
+      constructor(options = {}) {
+        super({ ...options, id: "cnyes" });
+      }
+      async fetch({ now }) {
+        const articles = [], errors = [];
+        for (const category of ["tw_stock", "wd_stock", "forex"]) {
+          try {
+            const result = JSON.parse(await fetchPublic("https://api.cnyes.com/media/api/v1/newslist/category/" + category + "?page=1&limit=30", this.fetcher));
+            if (!Array.isArray(result.items?.data)) throw Error("INVALID_RESPONSE");
+            for (const row of result.items.data) {
+              if (!/^\d+$/.test(String(row.newsId))) continue;
+              const title = typeof row.title === "string" ? row.title.replace(/<[^>]*>/g, " ").trim() : "";
+              const description = typeof row.summary === "string" ? row.summary.replace(/<[^>]*>/g, " ").trim().slice(0, 600) : null;
+              const seconds = Number(row.publishAt), publishedAt = Number.isFinite(seconds) && seconds > 0 && seconds < 1e11 ? new Date(seconds * 1e3).toISOString() : null;
+              const article = normalizeArticle({ title, description, url: "https://news.cnyes.com/news/id/" + row.newsId, publisher: "\u9245\u4EA8\u7DB2", publishedAt, imageUrl: null, imageRights: "not_verified", sourceCategory: category }, { source: this.id, market: category === "tw_stock" ? "TW" : "GLOBAL", now });
+              if (article) articles.push(article);
+            }
+          } catch (error) {
+            errors.push({ feed: category, code: safeError(error) });
+          }
+        }
+        if (!articles.length && errors.length) throw Error(errors[0].code);
+        return { articles, errors };
       }
     };
     MopsEventSource = class extends SourceAdapter {
@@ -4918,7 +4986,7 @@ function parseMops(rows, now = Date.now()) {
 async function harvestNews({ fetcher = fetch, now = Date.now(), enrich = false } = {}) {
   const { collectSources: collectSources2 } = await Promise.resolve().then(() => (init_intelligence_sources(), intelligence_sources_exports));
   const { articles, reports } = await collectSources2({ fetcher, now });
-  if (enrich) for (const article of articles.filter((row) => !["rss", "enclosure", "og", "twitter"].includes(row.imageType) && Number.isFinite(Date.parse(row.publishedAt)) && now - Date.parse(row.publishedAt) <= 72 * 36e5).slice(0, 16)) {
+  if (enrich) for (const article of articles.filter((row) => row.imageRights !== "not_verified" && !["rss", "enclosure", "og", "twitter"].includes(row.imageType) && Number.isFinite(Date.parse(row.publishedAt)) && now - Date.parse(row.publishedAt) <= 72 * 36e5).slice(0, 16)) {
     try {
       const metadata = await fetchArticleMetadata(article.url, fetcher);
       article.imageCandidates = [...article.imageCandidates || [], ...metadata.imageCandidates || []];
@@ -5011,7 +5079,7 @@ async function createBrief({ articles, universe, analyze, now = Date.now() }) {
     taiwan.pop();
     taiwan.push(company);
   }
-  const categoryStories = pool.filter((story) => story.themes.length).map((story) => normalizeStoryDisplay({ ...story, analysisStatus: "awaiting_ai", industrySignal: industrySignal(story) }));
+  const categoryStories = pool.slice(0, 48).map((story) => normalizeStoryDisplay({ ...story, ...discoverStocks(story, universe), analysisStatus: "awaiting_ai", industrySignal: industrySignal(story) }));
   const sectorMaterial = [];
   for (const story of [...categoryStories].sort((left, right) => Number(right.industrySignal === "potential_positive") - Number(left.industrySignal === "potential_positive") || right.importanceScore - left.importanceScore)) {
     if (sectorMaterial.length >= 8) break;
@@ -5087,7 +5155,7 @@ async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
   if (!publishToken) throw new Error("PUBLISH_AUTH_REQUIRED");
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetcher(new URL("/api/intelligence/publish", endpoint2), { method: "POST", headers: { Authorization: "Bearer " + publishToken, "Content-Type": "application/json" }, body, redirect: "error", signal: AbortSignal.timeout(6e4) });
+      const response = await fetcher(new URL("/api/intelligence/publish", endpoint2), { method: "POST", headers: { Authorization: "Bearer " + publishToken, "Content-Type": "application/json" }, body, redirect: "error", signal: AbortSignal.timeout(3e5) });
       if (!response.ok) {
         if (response.status < 500) throw new Error("PUBLISH_HTTP_" + response.status);
         throw new Error("PUBLISH_UNAVAILABLE");
@@ -5116,4 +5184,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
 export {
   refreshCloud
 };
-
