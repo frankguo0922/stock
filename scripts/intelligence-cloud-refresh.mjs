@@ -4515,6 +4515,19 @@ var init_event_types = __esm({
 });
 
 // src/intelligence/engine.js
+var engine_exports = {};
+__export(engine_exports, {
+  applyEventImpacts: () => applyEventImpacts,
+  clusterNews: () => clusterNews,
+  directions: () => directions,
+  discoverStocks: () => discoverStocks,
+  markets: () => markets,
+  portfolioOverlay: () => portfolioOverlay,
+  safeUrl: () => safeUrl,
+  themes: () => themes,
+  validateAnalysis: () => validateAnalysis,
+  validateUniverse: () => validateUniverse
+});
 function safeUrl(value2) {
   try {
     const url2 = new URL(value2);
@@ -4558,6 +4571,10 @@ function discoverStocks(cluster, universe) {
     return [{ businessEvidence, symbol: stock.symbol, name: stock.name, market: stock.market, sector: stock.sector || "\u5F85\u88DC\u8CC7\u6599", industry: [...new Set(exposure.map((item) => item.industry))].join(" / ") || "\u5F85\u88DC\u8CC7\u6599", themes: cluster.themes, valueChainRole: [...new Set(businessEvidence.map((item) => item.role))], relationScore, relationLevel: relationScore >= 60 && businessEvidence.length ? "HIGH" : relationScore >= 30 ? "MEDIUM" : "LOW", eventDirection: "uncertain", reason: exposure.length ? exposure.map((item) => item.reason || item.role).join("\uFF1B") : "\u65B0\u805E\u6A19\u984C\u76F4\u63A5\u63D0\u53CA\uFF1B\u5C1A\u672A\u78BA\u8A8D\u696D\u52D9\u66DD\u96AA", evidence: [.../* @__PURE__ */ new Set([...exposure.map((item) => item.url), ...direct ? cluster.sources.map((source) => source.url) : []])], components, missingSignals: ["geographicExposure", "earningsSensitivity", "marketConfirmation", ...!revenue.length ? ["revenueExposure"] : []], exposureStale: exposure.length > 0 && !fresh2.length }];
   }).sort((first, second) => second.relationScore - first.relationScore || first.market.localeCompare(second.market) || first.symbol.localeCompare(second.symbol));
   return { candidateCount: candidates.length, candidatePool: candidates.slice(0, 50), relatedStocks: candidates.slice(0, 12), coverage: { listed: stocks.length, profiled: stocks.filter((stock) => stock.exposures.length).length, markets: [...new Set(stocks.map((stock) => stock.market))] } };
+}
+function portfolioOverlay(ranked, positions) {
+  const held = new Set(positions.filter((row) => row.quantity > 0).map((row) => (row.currency === "TWD" ? "TW:" : "US:") + symbol(row.symbol)));
+  return ranked.map((row) => ({ ...row, portfolio: held.has((["TWSE", "TPEx"].includes(row.market) ? "TW:" : "US:") + symbol(row.symbol)) ? "HELD" : "NOT_HELD" }));
 }
 function validateAnalysis(value2, cluster) {
   const fields = ["headline", "summary", "whyItMatters", "marketImpact"];
@@ -4986,7 +5003,10 @@ function parseMops(rows, now = Date.now()) {
 async function harvestNews({ fetcher = fetch, now = Date.now(), enrich = false } = {}) {
   const { collectSources: collectSources2 } = await Promise.resolve().then(() => (init_intelligence_sources(), intelligence_sources_exports));
   const { articles, reports } = await collectSources2({ fetcher, now });
-  if (enrich) for (const article of articles.filter((row) => row.imageRights !== "not_verified" && !["rss", "enclosure", "og", "twitter"].includes(row.imageType) && Number.isFinite(Date.parse(row.publishedAt)) && now - Date.parse(row.publishedAt) <= 72 * 36e5).slice(0, 16)) {
+  const { clusterNews: clusterNews2 } = await Promise.resolve().then(() => (init_engine(), engine_exports));
+  const selected = clusterNews2(articles, now).slice(0, 24).flatMap((story) => story.sources);
+  const metadataUrls = new Set(selected.filter((row) => row.imageRights !== "not_verified" && !["rss", "enclosure", "og", "twitter"].includes(row.imageType)).slice(0, 16).map((row) => row.url));
+  if (enrich) for (const article of articles.filter((row) => metadataUrls.has(row.url))) {
     try {
       const metadata = await fetchArticleMetadata(article.url, fetcher);
       article.imageCandidates = [...article.imageCandidates || [], ...metadata.imageCandidates || []];
