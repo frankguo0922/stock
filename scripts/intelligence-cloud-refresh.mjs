@@ -4344,6 +4344,9 @@ function routineAnnouncement(article) {
   return meeting && routine && !materialChange.test(title + " " + (article.excerpt || article.description || ""));
 }
 function marketRelevant(article) {
+  const headline = article.originalTitle || article.headline || article.title || "";
+  if (/盤中速報|盤中快訊|intraday (alert|update)/i.test(headline)) return false;
+  if (/台股盤後|日股早盤|即時報價|中午暫收/.test(headline) && !materialChange.test(headline) && !/央行|政策|關稅|制裁|戰爭|風險|降息|升息|通膨/.test(headline)) return false;
   if (routineAnnouncement(article)) return false;
   if (!String(article.source || article.provider || "").startsWith("bbc")) return true;
   return /股|金融|經濟|經貿|貿易|關稅|制裁|央行|通膨|利率|債|匯率|美元|油價|能源|晶片|半導體|供應鏈|科技|企業|產業|投資|戰爭|衝突|航運|稀土|market|econom|business|inflation|tariff|trade|bank|oil|energy|chip|sanction|war/i.test((article.headline || article.title || "") + " " + (article.excerpt || article.description || ""));
@@ -4431,6 +4434,7 @@ function storyRegion(story) {
 }
 function editorialAngle(story) {
   const headline = (story.originalTitle || story.headline || "") + " " + (story.titleZh || "");
+  if (/台股|費半|半導體指數/.test(headline) && /大跌|狂跌|血洗|股災|崩|補跌|重挫/.test(headline)) return "taiwan-semiconductor-selloff";
   if (/oil|原油|油價/i.test(headline) && /dollar|美元/i.test(headline) && /retreat|slip|fall|ease|declin|回落|走低|下跌/i.test(headline)) return "oil-dollar-retreat";
   if (/台幣|臺幣/.test(headline) && /外資|匯出|貶值|重貶|走貶/.test(headline)) return "taiwan-capital-outflow";
   if (/疊券/.test(headline)) return "taiwan-bond-leverage";
@@ -4703,7 +4707,9 @@ __export(intelligence_sources_exports, {
   CnyesNewsSource: () => CnyesNewsSource,
   FinMindStockNewsSource: () => FinMindStockNewsSource,
   GNewsSource: () => GNewsSource,
+  MegaBankNewsSource: () => MegaBankNewsSource,
   MopsEventSource: () => MopsEventSource,
+  SeekingAlphaRssSource: () => SeekingAlphaRssSource,
   SourceAdapter: () => SourceAdapter,
   YahooTaiwanRssSource: () => YahooTaiwanRssSource,
   collectSources: () => collectSources,
@@ -4718,7 +4724,7 @@ function normalizeArticle(row, { source, market = "GLOBAL", language = "zh-TW", 
   return { ...row, id: createHash("sha256").update(source + "|" + url2 + "|" + publishedAt + "|" + stockSymbols.join(",")).digest("hex"), source, publisher: row.publisher || new URL(url2).hostname, title, description: typeof (row.description ?? row.excerpt) === "string" ? (row.description ?? row.excerpt).slice(0, 600) : null, url: url2, imageUrl: safeUrl(row.imageUrl), publishedAt, fetchedAt: new Date(now).toISOString(), language, market, stockSymbols, headline: title, excerpt: typeof (row.description ?? row.excerpt) === "string" ? (row.description ?? row.excerpt).slice(0, 600) : null, provider: row.provider || source, timestampKind: publishedAt ? row.timestampKind || "published" : "unknown_time" };
 }
 async function collectSources({ fetcher = fetch, now = Date.now(), sources } = {}) {
-  const adapters = sources || [new YahooTaiwanRssSource({ fetcher }), new CnaRssSource({ fetcher }), new CnyesNewsSource({ fetcher }), new CnbcRssSource({ fetcher }), new BbcRssSource({ fetcher }), new MopsEventSource({ fetcher }), new GNewsSource({ fetcher })];
+  const adapters = sources || [new YahooTaiwanRssSource({ fetcher }), new CnaRssSource({ fetcher }), new MegaBankNewsSource({ fetcher }), new SeekingAlphaRssSource({ fetcher }), new CnyesNewsSource({ fetcher }), new CnbcRssSource({ fetcher }), new BbcRssSource({ fetcher }), new MopsEventSource({ fetcher }), new GNewsSource({ fetcher })];
   const articles = [], reports = [];
   for (const adapter of adapters) {
     const result = await adapter.read({ now });
@@ -4727,7 +4733,7 @@ async function collectSources({ fetcher = fetch, now = Date.now(), sources } = {
   }
   return { articles, reports, fetchedAt: new Date(now).toISOString() };
 }
-var fresh, safeError, SourceAdapter, RssSource, YahooTaiwanRssSource, CnaRssSource, CnbcRssSource, BbcRssSource, CnyesNewsSource, MopsEventSource, FinMindStockNewsSource, GNewsSource;
+var fresh, safeError, SourceAdapter, RssSource, YahooTaiwanRssSource, CnaRssSource, SeekingAlphaRssSource, MegaBankNewsSource, CnbcRssSource, BbcRssSource, CnyesNewsSource, MopsEventSource, FinMindStockNewsSource, GNewsSource;
 var init_intelligence_sources = __esm({
   "scripts/intelligence-sources.mjs"() {
     init_intelligence_harvest();
@@ -4783,6 +4789,38 @@ var init_intelligence_sources = __esm({
       constructor(options = {}) {
         super({ ...options, id: "cna" });
         this.feeds = ["finance", "technology", "intworld"].map((category) => ({ id: "cna-" + category, publisher: "\u4E2D\u592E\u793E", market: category === "finance" ? "TW" : "GLOBAL", url: "https://feeds.feedburner.com/rsscna/" + category }));
+      }
+    };
+    SeekingAlphaRssSource = class extends RssSource {
+      constructor(options = {}) {
+        super({ ...options, id: "seeking-alpha" });
+        this.feeds = [{ id: "seeking-alpha-market-news", publisher: "Seeking Alpha", market: "US", language: "en", url: "https://seekingalpha.com/market_currents.xml" }];
+      }
+    };
+    MegaBankNewsSource = class extends SourceAdapter {
+      constructor(options = {}) {
+        super({ ...options, id: "megabank-moneydj" });
+      }
+      async fetch({ now }) {
+        const articles = [], errors = [];
+        for (const type of ["0", "1"]) {
+          try {
+            const response = await this.fetcher("https://fund.megabank.com.tw/ETFData/djjson/ETNEWSjson.djjson?a=" + type, { redirect: "manual", signal: AbortSignal.timeout(15e3) });
+            if (!response.ok) throw Error("HTTP_" + response.status);
+            const bytes = await response.arrayBuffer();
+            if (bytes.byteLength > 1e6) throw Error("RESPONSE_TOO_LARGE");
+            const data = JSON.parse(new TextDecoder("big5").decode(bytes));
+            if (!Array.isArray(data.ResultSet?.Result)) throw Error("INVALID_RESPONSE");
+            for (const item of data.ResultSet.Result.slice(0, 100)) {
+              if (!/^\d{4}\/\d{2}\/\d{2}$/.test(item.V1) || !/^[a-f0-9-]{36}$/i.test(item.V3)) continue;
+              const row = normalizeArticle({ title: item.V2, url: "https://fund.megabank.com.tw/ETFData/djhtm/ETNEWSContentMega.djhtm?TYPE=" + type + "&A=" + item.V3, publisher: "MoneyDJ\uFF0F\u5146\u8C50\u9280\u884C", publishedAt: item.V1.replaceAll("/", "-") + "T00:00:00+08:00", timestampKind: "date_only", publishedPrecision: "day", description: null }, { source: this.id, market: type === "0" ? "TW" : "GLOBAL", now });
+              if (row) articles.push(row);
+            }
+          } catch (error) {
+            errors.push({ feed: type, code: safeError(error) });
+          }
+        }
+        return { articles, errors };
       }
     };
     CnbcRssSource = class extends RssSource {
@@ -5150,6 +5188,77 @@ function validatePublicBrief(brief, now = Date.now()) {
 
 // scripts/intelligence-cloud-refresh.mjs
 init_engine();
+
+// cloudflare/intelligence/macro-data.mjs
+var macroIndicators = [
+  { id: "CPIAUCSL", name: "CPI\uFF08\u5B63\u8ABF\u6307\u6578\u63DB\u7B97\uFF09", unit: "\u5E74\u589E\u7387 %", transform: "yoy", keywords: ["CPI", "\u6D88\u8CBB\u8005\u7269\u50F9", "\u901A\u81A8"], mechanism: "\u672C\u5716\u7528\u5B63\u8ABF\u6307\u6578\u63DB\u7B97\u5E74\u589E\u7387\uFF0C\u53EF\u80FD\u8207\u65B0\u805E\u672A\u5B63\u8ABF\u5E74\u589E\u7387\u7565\u6709\u5DEE\u7570\uFF1B\u901A\u81A8\u5F71\u97FF\u5229\u7387\u9810\u671F\uFF0C\u4E0D\u4EE5\u55AE\u4E00\u6578\u503C\u9810\u6E2C\u80A1\u50F9\u3002" },
+  { id: "PCEPILFE", name: "\u6838\u5FC3 PCE \u7269\u50F9", unit: "\u5E74\u589E\u7387 %", transform: "yoy", keywords: ["PCE", "\u500B\u4EBA\u6D88\u8CBB\u652F\u51FA", "\u901A\u81A8"], mechanism: "\u6838\u5FC3\u7269\u50F9\u662F\u8CA8\u5E63\u653F\u7B56\u7684\u91CD\u8981\u89C0\u5BDF\u6307\u6A19\uFF1B\u6210\u9577\u8207\u901A\u81A8\u9700\u5408\u4F75\u5224\u8B80\u3002" },
+  { id: "UNRATE", name: "\u5931\u696D\u7387", unit: "%", transform: "level", keywords: ["\u5931\u696D\u7387", "\u5C31\u696D", "unemployment", "jobs"], mechanism: "\u52DE\u52D5\u5E02\u5834\u8F49\u5F31\u53EF\u80FD\u5F71\u97FF\u4F01\u696D\u9700\u6C42\u53CA\u964D\u606F\u9810\u671F\uFF0C\u5169\u8005\u5C0D\u80A1\u5E02\u7684\u4F5C\u7528\u53EF\u80FD\u76F8\u53CD\u3002" },
+  { id: "PAYEMS", name: "\u975E\u8FB2\u5C31\u696D\u65B0\u589E", unit: "\u5343\u4EBA", transform: "change", keywords: ["\u975E\u8FB2", "payroll", "\u5C31\u696D"], mechanism: "\u5C31\u696D\u8B8A\u52D5\u5F71\u97FF\u9700\u6C42\u8207\u5229\u7387\u9810\u671F\uFF1B\u65B0\u589E\u4EBA\u6578\u4E0D\u662F\u7E3D\u5C31\u696D\u4EBA\u6578\u3002" },
+  { id: "A191RL1Q225SBEA", name: "\u5BE6\u8CEA GDP \u6210\u9577", unit: "\u5B63\u589E\u5E74\u7387 %", frequency: "quarterly", transform: "level", keywords: ["GDP", "\u570B\u5167\u751F\u7522\u6BDB\u984D", "\u7D93\u6FDF\u6210\u9577"], mechanism: "\u6210\u9577\u6578\u64DA\u6703\u5F71\u97FF\u4F01\u696D\u7372\u5229\u8207\u653F\u7B56\u9810\u671F\uFF0C\u4E26\u53EF\u80FD\u56E0\u5F8C\u7E8C\u4F30\u503C\u4FEE\u8A02\u800C\u8B8A\u52D5\u3002" }
+];
+function parseFredCsv(text2, indicator, day) {
+  if (text2.split(/\r?\n/)[0] !== "observation_date," + indicator.id) throw Error("INVALID_SERIES");
+  const raw = text2.trim().split(/\r?\n/).slice(1).map((line) => {
+    const [date, value2] = line.split(",");
+    return { date, value: value2 && value2 !== "." ? Number(value2) : NaN };
+  }).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && row.date <= day && Number.isFinite(row.value)).sort((left, right) => left.date.localeCompare(right.date));
+  const byDate = new Map(raw.map((row) => [row.date, row.value]));
+  const points = raw.map((row, index) => {
+    const priorYear = Number(row.date.slice(0, 4)) - 1 + row.date.slice(4), base = indicator.transform === "yoy" ? byDate.get(priorYear) : raw[index - 1]?.value;
+    const value2 = indicator.transform === "yoy" ? base > 0 ? (row.value / base - 1) * 100 : null : indicator.transform === "change" ? base == null ? null : row.value - base : row.value;
+    return { date: row.date, value: value2 };
+  }).filter((row) => Number.isFinite(row.value)).slice(-18);
+  if (!points.length) throw Error("NO_SERIES");
+  return { ...indicator, points, asOf: points.at(-1).date, source: "FRED\uFF0F\u539F\u767C\u5E03\u6A5F\u95DC", sourceUrl: "https://fred.stlouisfed.org/series/" + indicator.id, consensus: null, consensusStatus: "unavailable", dateMeaning: "\u7D71\u8A08\u6240\u5C6C\u671F\u9593\uFF0C\u4E26\u975E\u516C\u5E03\u6642\u9593" };
+}
+function parseBlsSchedule(text2, now = Date.now()) {
+  if (!text2.includes("BEGIN:VCALENDAR")) throw Error("INVALID_CALENDAR");
+  const unfolded = text2.replace(/\r?\n[ \t]/g, "");
+  return [...unfolded.matchAll(/BEGIN:VEVENT\r?\n([\s\S]*?)END:VEVENT/g)].flatMap((match) => {
+    const summary = match[1].match(/^SUMMARY:(.*)$/m)?.[1]?.trim(), dt = match[1].match(/^DTSTART(?:;TZID=([^:\r\n]+))?:(\d{8}T\d{6}Z?)\s*$/m);
+    if (!summary || !dt || !/Consumer Price Index|Employment Situation|Producer Price Index|Job Openings/i.test(summary)) return [];
+    const value2 = dt[2], iso = value2.slice(0, 4) + "-" + value2.slice(4, 6) + "-" + value2.slice(6, 8) + "T" + value2.slice(9, 11) + ":" + value2.slice(11, 13) + ":" + value2.slice(13, 15) + "Z";
+    let timestamp = Date.parse(iso);
+    if (timestamp < now - 2 * 864e5 || timestamp > now + 22 * 864e5) return [];
+    if (!value2.endsWith("Z")) {
+      if (!/^(America\/New_York|US\/Eastern|US-Eastern)$/.test(dt[1] || "")) return [];
+      const offset = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "shortOffset" }).formatToParts(new Date(timestamp)).find((part) => part.type === "timeZoneName")?.value.match(/GMT([+-]\d+)/)?.[1];
+      if (!offset) return [];
+      timestamp -= Number(offset) * 36e5;
+    }
+    if (!Number.isFinite(timestamp) || timestamp < now - 864e5 || timestamp > now + 21 * 864e5) return [];
+    const name = /Consumer Price/i.test(summary) ? "\u7F8E\u570B CPI" : /Employment Situation/i.test(summary) ? "\u7F8E\u570B\u975E\u8FB2\u5C31\u696D\uFF0F\u5931\u696D\u7387" : /Producer Price/i.test(summary) ? "\u7F8E\u570B PPI" : "\u7F8E\u570B JOLTS \u8077\u7F3A";
+    return [{ name, title: summary, releaseAt: new Date(timestamp).toISOString(), source: "BLS \u5B98\u65B9\u6642\u7A0B", sourceUrl: "https://www.bls.gov/schedule/news_release/bls.ics", consensus: null }];
+  }).sort((left, right) => left.releaseAt.localeCompare(right.releaseAt));
+}
+async function collectMacroData({ fetcher = fetch, now = Date.now() } = {}) {
+  const day = new Date(now).toISOString().slice(0, 10), start = Number(day.slice(0, 4)) - 3 + day.slice(4), series = [], reports = [];
+  for (const indicator of macroIndicators) {
+    try {
+      const response = await fetcher("https://fred.stlouisfed.org/graph/fredgraph.csv?" + new URLSearchParams({ id: indicator.id, cosd: start, coed: day }), { redirect: "manual", signal: AbortSignal.timeout(15e3) });
+      if (!response.ok) throw Error("HTTP_" + response.status);
+      const text2 = await response.text();
+      if (text2.length > 2e5) throw Error("TOO_LARGE");
+      series.push(parseFredCsv(text2, indicator, day));
+      reports.push({ source: indicator.id, status: "success" });
+    } catch {
+      reports.push({ source: indicator.id, status: "unavailable" });
+    }
+  }
+  let schedule = [];
+  try {
+    const response = await fetcher("https://www.bls.gov/schedule/news_release/bls.ics", { redirect: "manual", signal: AbortSignal.timeout(15e3) });
+    if (!response.ok) throw Error();
+    schedule = parseBlsSchedule(await response.text(), now);
+    reports.push({ source: "BLS", status: "success" });
+  } catch {
+    reports.push({ source: "BLS", status: "unavailable" });
+  }
+  return { schema: 1, fetchedAt: new Date(now).toISOString(), series, schedule, reports, consensusNotice: "Investing.com \u81EA\u52D5\u64F7\u53D6\u56DE\u8986 403\uFF0C\u76EE\u524D\u6C92\u6709\u53EF\u9A57\u8B49\u8ABF\u67E5\u5171\u8B58\uFF1B\u4E0D\u4EE5 AI \u9810\u6E2C\u88DC\u503C\u3002", consensusSourceUrl: "https://hk.investing.com/economic-calendar", beaScheduleUrl: "https://www.bea.gov/news/schedule/full" };
+}
+
+// scripts/intelligence-cloud-refresh.mjs
 async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
   const endpoint2 = new URL(env.INTELLIGENCE_WORKER_URL);
   if (endpoint2.protocol !== "https:" || endpoint2.username || endpoint2.password) throw new Error("CONFIG_REQUIRED");
@@ -5160,6 +5269,11 @@ async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
   const brief = await enrichBriefCandidateNews(await createBrief({ articles: news.articles, universe: sectorData.universe }), { token: env.FINMIND_TOKEN || "" });
   brief.sourceReports = news.reports || [];
   brief.sectorProfileStatus = sectorData.status;
+  try {
+    const economicData = await collectMacroData();
+    if (economicData.series.length) brief.economicData = economicData;
+  } catch {
+  }
   validatePublicBrief(brief);
   const body = JSON.stringify(brief);
   if (Buffer.byteLength(body) > maxBriefBytes) throw new Error("TOO_LARGE");
