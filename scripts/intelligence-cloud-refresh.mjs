@@ -4346,6 +4346,7 @@ function routineAnnouncement(article) {
 function marketRelevant(article) {
   const headline = article.originalTitle || article.headline || article.title || "";
   if (/盤中速報|盤中快訊|intraday (alert|update)/i.test(headline)) return false;
+  if (/新台幣|新臺幣|台幣|臺幣/.test(headline) && /作收|暫收|收盤/.test(headline) && !/因|由於|央行|外資|政策|關稅|風險|結匯|出口商/.test(headline + " " + (article.excerpt || article.description || ""))) return false;
   if (/台股盤後|日股早盤|即時報價|中午暫收/.test(headline) && !materialChange.test(headline) && !/央行|政策|關稅|制裁|戰爭|風險|降息|升息|通膨/.test(headline)) return false;
   if (routineAnnouncement(article)) return false;
   if (!String(article.source || article.provider || "").startsWith("bbc")) return true;
