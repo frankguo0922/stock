@@ -5008,13 +5008,22 @@ function extractMetadata(html, articleUrl) {
   const imageCandidates = [{ url: absolute(meta.get("og:image")), type: "og" }, { url: absolute(meta.get("twitter:image")), type: "twitter" }].filter((item) => item.url).map((item) => ({ ...item, source: articleUrl }));
   return { title: meta.get("og:title") || null, description: plain(meta.get("description") || meta.get("og:description")) || null, imageCandidates, imageUrl: image ? absolute(image) : null, imageType: meta.has("og:image") ? "og" : meta.has("twitter:image") ? "twitter" : "fallback", imageSource: articleUrl, canonical: canonical ? absolute(canonical) : null, publishedAt: meta.get("article:published_time") || null, publisher: meta.get("og:site_name") || null };
 }
+function robotsAllows(robots, articleUrl) {
+  const groups = robots.split(/(?=^user-agent:)/im), specific = groups.filter((group) => /^user-agent:\s*HoldingsDeskIntelligence\s*$/im.test(group));
+  const applicable = specific.length ? specific : groups.filter((group) => /^user-agent:\s*\*\s*$/im.test(group));
+  const url2 = new URL(articleUrl), path = url2.pathname + url2.search, rules = [];
+  for (const group of applicable) for (const rule of group.matchAll(/^(allow|disallow):\s*([^\s#]+)/gim)) {
+    const pattern = rule[2].split("*").map((part) => part.replace(/[.+?^{}()|[\]\\]/g, "\\$&")).join(".*");
+    if (new RegExp("^" + pattern).test(path)) rules.push({ allow: rule[1].toLowerCase() === "allow", length: rule[2].replace(/\*/g, "").length });
+  }
+  rules.sort((left, right) => right.length - left.length || Number(right.allow) - Number(left.allow));
+  return !rules.length || rules[0].allow;
+}
 async function fetchArticleMetadata(articleUrl, fetcher = fetch, { readerPermission = false } = {}) {
   const host = new URL(articleUrl).hostname;
-  if (!/(^|\.)(federalreserve.gov|ecb.europa.eu|sec.gov|cna.com.tw|yahoo.com)$/.test(host)) throw new Error("METADATA_HOST_NOT_ALLOWED");
+  if (!/(^|\.)(federalreserve.gov|ecb.europa.eu|sec.gov|cna.com.tw|yahoo.com|news.cnyes.com)$/.test(host)) throw new Error("METADATA_HOST_NOT_ALLOWED");
   const robots = await fetchPublic(new URL("/robots.txt", articleUrl).href, fetcher, 1e5);
-  const groups = robots.split(/(?=^user-agent:)/im).filter((group) => /^user-agent:\s*(\*|HoldingsDeskIntelligence)/im.test(group));
-  const path = new URL(articleUrl).pathname;
-  if (groups.some((group) => [...group.matchAll(/^disallow:\s*(\S+)/gim)].some((match) => path.startsWith(match[1].replace(/\*.*$/, ""))))) throw new Error("ROBOTS_DISALLOWED");
+  if (!robotsAllows(robots, articleUrl)) throw new Error("ROBOTS_DISALLOWED");
   const html = await fetchPublic(articleUrl, fetcher, 5e5);
   if (/captcha|access denied|paywall/i.test(html.slice(0, 5e3))) throw new Error("ARTICLE_RESTRICTED");
   const metadata = extractMetadata(html, articleUrl);
@@ -5259,6 +5268,27 @@ async function collectMacroData({ fetcher = fetch, now = Date.now() } = {}) {
   return { schema: 1, fetchedAt: new Date(now).toISOString(), series, schedule, reports, consensusNotice: "Investing.com \u81EA\u52D5\u64F7\u53D6\u56DE\u8986 403\uFF0C\u76EE\u524D\u6C92\u6709\u53EF\u9A57\u8B49\u8ABF\u67E5\u5171\u8B58\uFF1B\u4E0D\u4EE5 AI \u9810\u6E2C\u88DC\u503C\u3002", consensusSourceUrl: "https://hk.investing.com/economic-calendar", beaScheduleUrl: "https://www.bea.gov/news/schedule/full" };
 }
 
+// scripts/intelligence-selected-images.mjs
+init_intelligence_harvest();
+async function enrichSelectedImages(brief, { fetcher = fetch, metadata = fetchArticleMetadata, limit = 32 } = {}) {
+  const stories = [...new Map([...brief.stories, ...brief.categoryStories || []].map((story) => [story.id, story])).values()];
+  const sources = [...new Map(stories.flatMap((story) => story.sources).filter((source) => !source.imageCandidates?.some((image) => ["rss", "enclosure", "og", "twitter"].includes(image.type))).map((source) => [source.url, source])).values()].slice(0, limit);
+  const results = /* @__PURE__ */ new Map();
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, sources.length) }, async () => {
+    while (cursor < sources.length) {
+      const source = sources[cursor++];
+      try {
+        const result = await metadata(source.url, fetcher);
+        if (result.imageCandidates?.length) results.set(source.url, result.imageCandidates);
+      } catch {
+      }
+    }
+  }));
+  const merge = (rows) => rows.map((story) => ({ ...story, sources: story.sources.map((source) => results.has(source.url) ? { ...source, imageCandidates: [...source.imageCandidates || [], ...results.get(source.url)] } : source) }));
+  return { ...brief, stories: merge(brief.stories), ...brief.categoryStories ? { categoryStories: merge(brief.categoryStories) } : {}, ...brief.materialClusters ? { materialClusters: merge(brief.materialClusters) } : {} };
+}
+
 // scripts/intelligence-cloud-refresh.mjs
 async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
   const endpoint2 = new URL(env.INTELLIGENCE_WORKER_URL);
@@ -5267,7 +5297,7 @@ async function refreshCloud({ env = process.env, fetcher = fetch } = {}) {
   if (!news.articles?.length) throw new Error("NO_FRESH_NEWS");
   const sectorData = await enrichSectorProfiles(JSON.parse(await readFile(resolve(env.INTELLIGENCE_UNIVERSE_FILE || "intelligence-runtime/universe.json"), "utf8")));
   if (markets.some((market) => !sectorData.universe.stocks?.some((stock) => stock.market === market))) throw new Error("INCOMPLETE_UNIVERSE");
-  const brief = await enrichBriefCandidateNews(await createBrief({ articles: news.articles, universe: sectorData.universe }), { token: env.FINMIND_TOKEN || "" });
+  const brief = await enrichSelectedImages(await enrichBriefCandidateNews(await createBrief({ articles: news.articles, universe: sectorData.universe }), { token: env.FINMIND_TOKEN || "" }));
   brief.sourceReports = news.reports || [];
   brief.sectorProfileStatus = sectorData.status;
   try {
