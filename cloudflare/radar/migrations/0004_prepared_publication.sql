@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS radar_prepared(session TEXT PRIMARY KEY,prepared_at TEXT NOT NULL,as_of TEXT NOT NULL,payload TEXT NOT NULL);

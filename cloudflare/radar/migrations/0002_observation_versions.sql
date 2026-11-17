@@ -1,0 +1,13 @@
+DROP INDEX radar_snapshots_available;
+ALTER TABLE radar_snapshots RENAME TO radar_snapshots_first;
+CREATE TABLE radar_snapshots(dataset TEXT NOT NULL,source_date TEXT NOT NULL,available_at TEXT NOT NULL,source_url TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(dataset,source_date,available_at));
+INSERT INTO radar_snapshots SELECT * FROM radar_snapshots_first;
+DROP TABLE radar_snapshots_first;
+CREATE INDEX radar_snapshots_available ON radar_snapshots(dataset,available_at);
+DROP INDEX radar_facts_security;
+ALTER TABLE radar_facts RENAME TO radar_facts_first;
+CREATE TABLE radar_facts(market TEXT NOT NULL,symbol TEXT NOT NULL,kind TEXT NOT NULL,date TEXT NOT NULL,available_at TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(market,symbol,kind,date,available_at));
+INSERT INTO radar_facts SELECT * FROM radar_facts_first;
+DROP TABLE radar_facts_first;
+CREATE INDEX radar_facts_security ON radar_facts(market,symbol,available_at,date);
+ALTER TABLE radar_members ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
