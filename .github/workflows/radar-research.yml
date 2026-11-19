@@ -12,11 +12,6 @@ on:
         type: choice
         default: auto
         options: [auto, prepare, research, check]
-  schedule:
-    - cron: '17 11-17,19-23 * * *'
-    - cron: '17 18 * * *'
-    - cron: '27 19,20 * * 0-4'
-    - cron: '17 21 * * 0-4'
 permissions:
   contents: read
   id-token: write
